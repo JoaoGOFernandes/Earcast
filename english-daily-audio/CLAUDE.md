@@ -19,12 +19,16 @@ Usuários esperados: 1 a 5 pessoas (uso pessoal + amigos próximos).
 
 ## Stack
 
-- **Frontend:** Next.js 14 App Router, TypeScript, Tailwind CSS, shadcn/ui
-- **Backend:** Next.js API Routes (BFF — único ponto de saída para serviços externos)
+- **Frontend:** Next.js 16 App Router, React 19, TypeScript, Tailwind CSS v4, shadcn/ui (`@base-ui/react`)
+- **Backend:** Server Actions + rotas do Next.js (BFF — único ponto de saída para serviços externos)
 - **Banco:** Supabase (Postgres + Storage + Auth + pg_cron)
-- **TTS:** Google Cloud Text-to-Speech API (Neural2 via SSML marks — timestamps por palavra para karaokê)
-- **LLM:** Gemini via Vertex AI (`gemini-2.5-flash` via `@google/genai`) — chamado APENAS server-side
+- **TTS:** Google Cloud Text-to-Speech (`src/lib/google-tts.ts` — Neural2 via SSML marks, timestamps por palavra para karaokê)
+- **LLM:** Gemini via Vertex AI (`gemini-2.5-flash` via `@google/genai`, `src/lib/gemini.ts`) — chamado APENAS server-side
+- **Auth Google Cloud:** ADC do gcloud localmente (`gcloud auth application-default login`);
+  na Vercel, service account via `GOOGLE_SERVICE_ACCOUNT_KEY` (`src/lib/google-credentials.ts`)
+- **Hospedagem:** Vercel
 - **Tipos:** Gerados via `supabase gen types` em `/src/types/supabase.ts`
+- **Piper TTS:** fora do fluxo atual — `earcast-piper/` e `/docs/setup/piper-vps.md` ficam só como referência
 
 ---
 
@@ -91,15 +95,15 @@ src/
 │   │   ├── prompt-builder.ts
 │   │   ├── translator.ts
 │   │   └── actions.ts              # Server action: generateForPlaylist
-│   └── audio/
-│       ├── job-dispatcher.ts
-│       └── piper-client.ts         # Só chamado server-side
+│   └── audio/                      # (planejado — Piper fora do fluxo atual)
 │
 ├── lib/
 │   ├── supabase/
 │   │   ├── client.ts               # Browser client
 │   │   └── server.ts               # Server client (cookies)
-│   ├── gemini.ts                   # Cliente Gemini (substitui claude.ts)
+│   ├── gemini.ts                   # Cliente Gemini (Vertex AI)
+│   ├── google-tts.ts               # Cliente Google Cloud TTS
+│   ├── google-credentials.ts       # Service account (Vercel) ou undefined → ADC
 │   ├── env.ts                      # Zod schema de env vars
 │   ├── errors.ts                   # Tipos de erro padronizados
 │   └── result.ts                   # Result<T, E> type
@@ -152,36 +156,21 @@ mobile                        desktop (md+)
 
 ## Padrões de código
 
-### Cliente Gemini
-```ts
-// src/lib/gemini.ts
-import { GoogleGenerativeAI } from '@google/generative-ai'
-import { env } from '@/lib/env'
-
-const genAI = new GoogleGenerativeAI(env.GOOGLE_API_KEY)
-
-export const gemini = genAI.getGenerativeModel({
-  model: 'gemini-2.5-flash',
-})
-```
-
 ### Variáveis de ambiente
-```ts
-// src/lib/env.ts
-import { z } from 'zod'
 
-const EnvSchema = z.object({
-  GOOGLE_API_KEY: z.string().min(1),
-  PIPER_VPS_URL: z.string().url(),
-  PIPER_VPS_SECRET: z.string().min(32),
-  SUPABASE_URL: z.string().url(),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
-})
+Validadas em `src/lib/env.ts` (Zod). Localmente ficam em `.env.local` (ignorado pelo git);
+na Vercel, em Project Settings → Environment Variables (Production e Preview).
 
-export const env = EnvSchema.parse(process.env)
-```
+| Nome | Local | Vercel | Observação |
+|---|---|---|---|
+| `SUPABASE_URL` | ✅ | ✅ | URL do projeto Supabase |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅ | ✅ | Secreta — só server-side |
+| `NEXT_PUBLIC_SUPABASE_URL` | ✅ | ✅ | Exposta ao browser |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | ✅ | Exposta ao browser (protegida por RLS) |
+| `GOOGLE_CLOUD_PROJECT` | ✅ | ✅ | Projeto GCP do Vertex AI e do TTS |
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | ❌ | ✅ | JSON inteiro da service account (precisa de `client_email` e `private_key`). Localmente deixe vazio — o ADC do gcloud é usado |
+
+A service account precisa dos papéis **Vertex AI User** e acesso à **Cloud Text-to-Speech API**.
 
 ### Server Action
 ```ts
@@ -234,20 +223,46 @@ export const err = <E>(error: E): Result<never, E> => ({ success: false, error }
 - [x] Projeto Next.js criado
 - [x] Documentação spec-driven na raiz (`/docs`)
 - [x] Projeto Supabase criado
-- [x] `.env.local` preenchido (Supabase + Google AI)
+- [x] `.env.local` preenchido (Supabase + Google Cloud)
 - [x] Supabase CLI instalado e linkado
+- [x] Tipos gerados (`npx supabase gen types typescript --linked > src/types/supabase.ts`)
+- [x] Credenciais Google via service account prontas para a Vercel
 
-### ⏳ Pendente — Piper VPS (Fase 3)
-As variáveis abaixo ainda são placeholder e serão preenchidas na Fase 3:
-```
-PIPER_VPS_URL=http://placeholder:8000
-PIPER_VPS_SECRET=placeholder-trocar-depois
-```
-Ver instruções completas em `/docs/setup/piper-vps.md`
+### ⏳ Pendente
+- [ ] Primeiro deploy na Vercel (preview → produção)
 
-### ⏳ Pendente — após scaffold
-- [x] Rodar `npx supabase gen types typescript --linked > src/types/supabase.ts`
-- [ ] Deploy Vercel (após tudo funcionando local)
+### 🚫 Fora do fluxo atual — Piper VPS
+O TTS foi migrado para o Google Cloud TTS. O Piper (`earcast-piper/`, `/docs/setup/piper-vps.md`,
+`/docs/features/audio-pipeline.md`) não é usado hoje e não tem variáveis de ambiente no `env.ts`.
+Não reintroduza sem confirmação.
+
+---
+
+## Fluxo de trabalho e deploy
+
+### Verificação antes de qualquer push
+Rodar dentro de `english-daily-audio/`:
+```bash
+npx tsc --noEmit
+npm run lint
+npm run build
+```
+Enquanto os erros de lint antigos não forem corrigidos (branch `fix/lint`), o lint só bloqueia
+se houver erro nos arquivos alterados na branch (`npx eslint <arquivos>`) — ver `/deploy-preview`.
+
+### Deploy (Vercel ligada ao GitHub)
+- **Push em qualquer branch ≠ `main`** → deploy de **preview** automático
+- **Merge na `main`** → deploy de **produção**
+- **NUNCA** dar push direto na `main` sem confirmação explícita do usuário — o caminho é branch → PR → merge (squash)
+- Comandos do Claude Code na raiz do repo: `/setup-local`, `/deploy-preview`, `/deploy-prod`
+
+### Migrations do banco
+1. Criar o SQL em `supabase/migrations/<timestamp>_<nome>.sql`
+2. Aplicar: `npx supabase db push`
+3. Regenerar tipos: `npx supabase gen types typescript --linked > src/types/supabase.ts`
+4. Rodar `npx tsc --noEmit` e commitar a migration junto com os tipos
+
+Em produção, aplicar as migrations **antes** do merge que depende delas.
 
 ---
 
@@ -265,8 +280,8 @@ Antes de implementar qualquer feature, leia o doc correspondente:
 | Player e marcação | `/docs/features/player.md` |
 | LSR Engine (SRS) | `/docs/features/lsr-engine.md` |
 | Progressive Consolidation | `/docs/features/progressive-consolidation.md` |
-| Piper TTS + pipeline | `/docs/features/audio-pipeline.md` |
-| Setup Piper VPS | `/docs/setup/piper-vps.md` |
+| Piper TTS + pipeline (fora do fluxo atual) | `/docs/features/audio-pipeline.md` |
+| Setup Piper VPS (fora do fluxo atual) | `/docs/setup/piper-vps.md` |
 
 ---
 
@@ -274,7 +289,7 @@ Antes de implementar qualquer feature, leia o doc correspondente:
 
 1. Auth + Biblioteca + extração + análise de relevância (Gemini)
 2. Playlist Manager + geração de texto + tradução (Gemini)
-3. Piper VPS + pipeline assíncrono + player básico
+3. Pipeline de áudio (Google Cloud TTS; Piper descartado) + player básico
 4. Player com sincronização texto-áudio + modo marcação
 5. LSR Engine
 6. Progressive Consolidation

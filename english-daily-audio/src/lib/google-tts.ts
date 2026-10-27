@@ -1,10 +1,16 @@
 import 'server-only'
 import { v1beta1, protos } from '@google-cloud/text-to-speech'
+import { env } from '@/lib/env'
+import { googleCredentials } from '@/lib/google-credentials'
 
 type SynthesizeResponse = protos.google.cloud.texttospeech.v1beta1.ISynthesizeSpeechResponse
 const { SSML_MARK } = protos.google.cloud.texttospeech.v1beta1.SynthesizeSpeechRequest.TimepointType
 
-const client = new v1beta1.TextToSpeechClient()
+const client = new v1beta1.TextToSpeechClient(
+  googleCredentials
+    ? { credentials: googleCredentials, projectId: env.GOOGLE_CLOUD_PROJECT }
+    : undefined,
+)
 
 export interface WordTimestamp {
   word: string

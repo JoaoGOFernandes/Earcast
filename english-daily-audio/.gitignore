@@ -41,3 +41,6 @@ yarn-error.log*
 next-env.d.ts
 
 /credentials
+
+# supabase CLI (estado local do link)
+/supabase/.temp
